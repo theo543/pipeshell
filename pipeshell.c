@@ -265,7 +265,7 @@ static void extend_buf(void **buf, size_t *len, size_t size) {
 
 int main(void){
     while(true) {
-        printf("> ");
+        if(isatty(STDIN_FILENO)) fprintf(stderr, "> ");
         char *command = NULL;
         size_t command_buf_capacity = 0;
         ssize_t command_len = getline(&command, &command_buf_capacity, stdin);
@@ -282,7 +282,7 @@ int main(void){
                     exit(EXIT_FAILURE);
                 }
             }
-            assert((size_t)command_len + 2 >= command_buf_capacity);
+            assert((size_t)command_len + 2 <= command_buf_capacity);
             command[command_len++] = '\n';
             command[command_len] = '\0';
         }
@@ -323,24 +323,25 @@ int main(void){
                 pending_null = NULL;
             }
 
-            if(tok.kind == TEXT && !pending_redirect) {
-                extend_buf((void**)&arg_ptr_buf, &arg_ptr_buf_len, sizeof(char**));
-                arg_ptr_buf[arg_ptr_buf_len - 1] = tok.text;
-                proc_argc++;                
+            if(tok.kind == TEXT) {
+                if(!pending_redirect) {
+                    extend_buf((void**)&arg_ptr_buf, &arg_ptr_buf_len, sizeof(char**));
+                    arg_ptr_buf[arg_ptr_buf_len - 1] = tok.text;
+                    proc_argc++;                
+                } else {
+                    if(tok.kind != TEXT) {
+                        fprintf(stderr, "Syntax error: expected text after redirect token, got %s\n", last_iter ? "end of line" : stringify_enum[tok.kind]);
+                        exit(1);
+                    }
+                    extend_buf((void**)&proc_redirect_buf, &proc_redirect_buf_len, sizeof(struct proc_redirect));
+                    proc_redirect_buf[proc_redirect_buf_len - 1] = (struct proc_redirect){.file_name = tok.text, .target_fd = pending_redirect_fd, .open_flags = pending_redirect_flags};
+                    pending_redirect_fd = 0;
+                    pending_redirect_flags = 0;
+                    pending_redirect = false;
+                }
                 // *ptr is the character right after the text token
                 // can't write null terminator now, must defer until after next token
                 pending_null = ptr;
-                continue;
-            } else if(pending_redirect) {
-                if(tok.kind != TEXT) {
-                    fprintf(stderr, "Syntax error: expected text after redirect token, got %s\n", last_iter ? "end of line" : stringify_enum[tok.kind]);
-                    exit(1);
-                }
-                extend_buf((void**)&proc_redirect_buf, &proc_redirect_buf_len, sizeof(struct proc_redirect));
-                proc_redirect_buf[proc_redirect_buf_len - 1] = (struct proc_redirect){.file_name = tok.text, .target_fd = pending_redirect_fd, .open_flags = pending_redirect_flags};
-                pending_redirect_fd = 0;
-                pending_redirect_flags = 0;
-                pending_redirect = false;
                 continue;
             }
 
@@ -367,9 +368,10 @@ int main(void){
             }
 
             // fill in proc_redirect header with number of arguments and redirects
-            proc_redirect_buf[proc_redirect_header_idx] = (struct proc_redirect){.file_name = NULL, .target_fd = proc_argc, .open_flags = proc_redirect_buf_len - proc_redirect_header_idx};
+            proc_redirect_buf[proc_redirect_header_idx] = (struct proc_redirect){.file_name = NULL, .target_fd = proc_argc, .open_flags = proc_redirect_buf_len - proc_redirect_header_idx - 1};
             proc_argc = 0;
             // allocate new header to be used for next process if any
+            proc_redirect_header_idx = proc_redirect_buf_len;
             extend_buf((void**)&proc_redirect_buf, &proc_redirect_buf_len, sizeof(struct proc_redirect));
 
             // add terminator to argument list
@@ -410,11 +412,11 @@ int main(void){
                 continue;
             }
             // in forked process now
-            if(x != 0 && dup2(prev_process_pipe, STDIN_FILENO) != 0) {
+            if(x != 0 && dup2(prev_process_pipe, STDIN_FILENO) < 0) {
                 perror("dup2");
                 exit(1);
             }
-            if(x != processes - 1 && dup2(pipe_fds[1], STDOUT_FILENO) != 0) {
+            if(x != processes - 1 && dup2(pipe_fds[1], STDOUT_FILENO) < 0) {
                 perror("dup2");
                 exit(1);
             }
@@ -425,14 +427,14 @@ int main(void){
             assert(redirect->file_name == NULL);
             for(int y = 1;y <= redirect->open_flags;y++) {
                 int fd;
-                while((fd = open(redirect[y].file_name, redirect[y].open_flags | O_CLOEXEC)) != 0) {
+                while((fd = open(redirect[y].file_name, redirect[y].open_flags | O_CLOEXEC, S_IROTH | S_IRGRP | S_IRUSR | S_IWUSR)) < 0) {
                     if(errno == EINTR) continue;
                     perror("open");
                     exit(1);
                 }
                 if(fd != redirect->target_fd) {
                     // copy onto target fd (copy won't have CLOEXEC bit)
-                    if(dup2(fd, redirect->target_fd) != 0) {
+                    if(dup2(fd, redirect[y].target_fd) < 0) {
                         perror("dup2");
                         exit(1);
                     }
@@ -444,7 +446,7 @@ int main(void){
                     }
                 }
             }
-            execv(*arg_start, arg_start);
+            execvp(*arg_start, arg_start);
             perror("execv");
             exit(1);
         }
