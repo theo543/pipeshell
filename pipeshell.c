@@ -384,7 +384,7 @@ int main(void){
             assert(tok.kind == PIPE);
 
             if(proc_argc == 0) {
-                if(last_iter && arg_ptr_buf_len == 0 && proc_redirect_buf_len == 0) {
+                if(last_iter && arg_ptr_buf_len == 0 && proc_redirect_buf_len == 1) {
                     // completely empty line, do nothing and go to next line
                     assert(processes == 0);
                     goto next_line;
