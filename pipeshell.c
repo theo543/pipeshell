@@ -21,7 +21,7 @@ struct str_list {
 };
 
 static void spaces(char **ptr) {
-    while(**ptr != '\n' && isspace(**ptr)) {
+    while(**ptr != '\n' && **ptr != '\0' && isspace(**ptr)) {
         (*ptr)++;
     }
 }
@@ -106,7 +106,7 @@ static struct token token(char **ptr) {
         // decode escapes directly into the original string to avoid allocation
         char *decode_out = str_start;
         while(**ptr != '"') {
-            if(**ptr == '\n') {
+            if(**ptr == '\n' || **ptr == '\0') {
                 fprintf(stderr, "Syntax error: encountered end of line while reading quoted string\n");
                 exit(EXIT_FAILURE);
             }
@@ -152,7 +152,7 @@ static struct token token(char **ptr) {
 
     char *str_start = *ptr;
     // either unquoted string token or redirect token
-    while(**ptr != '>' && **ptr != '<' && **ptr != '|' && !isspace(**ptr)) {
+    while(**ptr != '>' && **ptr != '<' && **ptr != '|' && **ptr != '\0' && !isspace(**ptr)) {
         (*ptr)++;
     }
 
@@ -268,24 +268,15 @@ int main(void){
         if(isatty(STDIN_FILENO)) fprintf(stderr, "> ");
         char *command = NULL;
         size_t command_buf_capacity = 0;
-        ssize_t command_len = getline(&command, &command_buf_capacity, stdin);
-        if(command_len < 0) {
+        errno = 0;
+        if(getline(&command, &command_buf_capacity, stdin) < 0) {
+            if(errno == 0) {
+                exit(0); // EOF
+            }
             perror("getline");
             exit(EXIT_FAILURE);
         }
         assert(command != NULL);
-        if(command_len == 0 || command[command_len - 1] != '\n') {
-            if(command_buf_capacity <= (size_t)command_len + 1) {
-                command = realloc(command, ++command_buf_capacity);
-                if(command == NULL) {
-                    fprintf(stderr, "realloc failed\n");
-                    exit(EXIT_FAILURE);
-                }
-            }
-            assert((size_t)command_len + 2 <= command_buf_capacity);
-            command[command_len++] = '\n';
-            command[command_len] = '\0';
-        }
 
         char *ptr = command;
         char **arg_ptr_buf = NULL;
@@ -308,7 +299,7 @@ int main(void){
             bool last_iter;
             struct token tok;
 
-            if(*ptr == '\n') {
+            if(*ptr == '\n' || *ptr == '\0') {
                 last_iter = true;
                 tok = (struct token){.kind = PIPE};
             } else {
