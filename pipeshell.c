@@ -263,6 +263,41 @@ static void extend_buf(void **buf, size_t *len, size_t size) {
     assert(*buf != NULL);
 }
 
+void dup2_(int fd1, int fd2) {
+    if(dup2(fd1, fd2) < 0) {
+        perror("dup2");
+        exit(1);
+    }
+}
+
+void close_(int fd) {
+    if(close(fd) != 0) {
+        perror("close");
+        exit(1);
+    }
+}
+
+void pipe_(int pipefd[2]) {
+    if(pipe(pipefd) != 0) {
+        perror("pipe");
+        exit(1);
+    }
+}
+
+void set_cloexec(int fd) {
+    if(fcntl(fd, F_SETFD, FD_CLOEXEC) != 0) {
+        perror("fcntl(.., F_SETFD, F_CLOEXEC)");
+        exit(1);
+    }
+}
+
+void clear_cloexec(int fd) {
+    if(fcntl(fd, F_SETFD, 0) != 0) {
+        perror("fcntl(.., F_SETFD, 0)");
+        exit(1);
+    }
+}
+
 int main(void){
     while(true) {
         if(isatty(STDIN_FILENO)) fprintf(stderr, "> ");
@@ -387,34 +422,39 @@ int main(void){
 
         for(int x = 0;x < processes;x++) {
             int pipe_fds[2] = {0, 0};
-            if(x != processes - 1 && pipe(pipe_fds) != 0) {
-                perror("pipe");
-                break;
+            if(x != processes - 1) {
+                pipe_(pipe_fds);
+                set_cloexec(pipe_fds[0]);
+                set_cloexec(pipe_fds[1]);
             }
             int pid = fork();
             if(pid < 0) {
                 perror("fork");
                 break;
             } else if(pid != 0) {
-                prev_process_pipe = pipe_fds[0];
+                if(processes == 1) {
+                    // no pipes
+                } else if(x == 0) {
+                    // first in pipe
+                    prev_process_pipe = pipe_fds[0];
+                    close_(pipe_fds[1]);
+                } else if(x == processes - 1) {
+                    // last in pipe
+                    close_(prev_process_pipe);
+                } else {
+                    // middle of pipe
+                    close_(prev_process_pipe);
+                    prev_process_pipe = pipe_fds[0];
+                    close_(pipe_fds[1]);
+                }
                 arg_start += redirect->target_fd + 1; // target_fd holds number of arguments
                 assert(*(arg_start - 1) == NULL);
                 redirect += redirect->open_flags + 1; // open_flags holds number of redirects
                 continue;
             }
             // in forked process now
-            if(x != 0 && dup2(prev_process_pipe, STDIN_FILENO) < 0) {
-                perror("dup2");
-                exit(1);
-            }
-            if(x != processes - 1 && dup2(pipe_fds[1], STDOUT_FILENO) < 0) {
-                perror("dup2");
-                exit(1);
-            }
-            if(x != 0 && (close(pipe_fds[0]) != 0 || close(pipe_fds[1]) != 0)) {
-                perror("close");
-                exit(1);
-            }
+            if(x != 0) dup2_(prev_process_pipe, STDIN_FILENO);
+            if(x != processes - 1) dup2_(pipe_fds[1], STDOUT_FILENO);
             assert(redirect->file_name == NULL);
             for(int y = 1;y <= redirect->open_flags;y++) {
                 int fd;
@@ -425,20 +465,13 @@ int main(void){
                 }
                 if(fd != redirect->target_fd) {
                     // copy onto target fd (copy won't have CLOEXEC bit)
-                    if(dup2(fd, redirect[y].target_fd) < 0) {
-                        perror("dup2");
-                        exit(1);
-                    }
+                    dup2_(fd, redirect[y].target_fd);
                 } else {
-                    // remove CLOEXEC flag
-                    if(fcntl(fd, F_SETFD, 0) != 0) {
-                        perror("fcntl");
-                        exit(1);
-                    }
+                    clear_cloexec(fd);
                 }
             }
             execvp(*arg_start, arg_start);
-            perror("execv");
+            perror("execvp");
             exit(1);
         }
 
