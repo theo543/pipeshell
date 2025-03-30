@@ -36,7 +36,7 @@ static bool hex(char **ptr, uint8_t *number) {
             digit = chr - '0';
         } else if(chr >= 'A' && chr <= 'F') {
             digit = chr - 'A' + 10;
-        } else if(chr >= 'a' && chr <= 'a') {
+        } else if(chr >= 'a' && chr <= 'f') {
             digit = chr - 'a' + 10;
         } else {
             fprintf(stderr, "Syntax error: expected hex digit, got '%c'\n", chr);
