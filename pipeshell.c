@@ -26,8 +26,8 @@ static void spaces(char **ptr) {
     }
 }
 
-static uint8_t hex(char **ptr) {
-    uint8_t number = 0;
+static bool hex(char **ptr, uint8_t *number) {
+    *number = 0;
     for(int x = 0;x < 2;x++) {
         char chr = **ptr;
         uint8_t digit;
@@ -40,11 +40,11 @@ static uint8_t hex(char **ptr) {
             digit = chr - 'a' + 10;
         } else {
             fprintf(stderr, "Syntax error: expected hex digit, got '%c'\n", chr);
-            exit(EXIT_FAILURE);
+            return false;
         }
-        number = number * 16 + digit;
+        *number = *number * 16 + digit;
     }
-    return number;
+    return true;
 }
 
 static bool parse_int(char *start, char *end, int *out) {
@@ -91,10 +91,11 @@ struct token {
 
 static const char * const stringify_enum[] = {[TEXT] = "TEXT", [TO_FILE] = "TO_FILE", [TO_FILE_APPEND] = "TO_FILE_APPEND", [FROM_FILE] = "FROM_FILE", [PIPE] = "PIPE"};
 
-static struct token token(char **ptr) {
+static bool token(char **ptr, struct token *token) {
     if(**ptr == '|') {
         (*ptr)++;
-        return (struct token){.kind = PIPE};
+        *token = (struct token){.kind = PIPE};
+        return true;
     }
 
     if(**ptr == '"') {
@@ -108,7 +109,7 @@ static struct token token(char **ptr) {
         while(**ptr != '"') {
             if(**ptr == '\n' || **ptr == '\0') {
                 fprintf(stderr, "Syntax error: encountered end of line while reading quoted string\n");
-                exit(EXIT_FAILURE);
+                return false;
             }
             if(**ptr != '\\') {
                 *decode_out = **ptr;
@@ -128,12 +129,14 @@ static struct token token(char **ptr) {
                     decoded = '\\';
                     break;
                 case 'x':
-                    decoded = hex(ptr);
+                    if(!hex(ptr, (uint8_t*)&decoded)) {
+                        return false;
+                    }
                     break;
                 default:
                     fprintf(stderr, "Syntax error: unknown escape \\%c, only \\n, \\\\, \\xXX are supported\n", escape);
-                    exit(EXIT_FAILURE);
-            }
+                    return false;
+                }
             *decode_out = decoded;
             decode_out++;
         }
@@ -147,7 +150,8 @@ static struct token token(char **ptr) {
         assert(decode_out < *ptr);
         *decode_out = '\0';
 
-        return (struct token){.kind = TEXT, .text = str_start};
+        *token = (struct token){.kind = TEXT, .text = str_start};
+        return true;
     }
 
     char *str_start = *ptr;
@@ -174,7 +178,8 @@ static struct token token(char **ptr) {
 
     if(is_unquoted_string) {
         // caller places the null terminator for this, doing it here might lose a token or newline
-        return (struct token){.kind = TEXT, .text = str_start};
+        *token = (struct token){.kind = TEXT, .text = str_start};
+        return true;
     }
 
     assert(**ptr == '>' || **ptr == '<');
@@ -184,9 +189,10 @@ static struct token token(char **ptr) {
         (*ptr)++;
         if(**ptr == '<') {
             fprintf(stderr, "Syntax error: << is not a valid redirect, did you mean <?\n");
-            exit(EXIT_FAILURE);
+            return false;
         }
-        return (struct token){.kind = FROM_FILE, .redirect_fd = redirect_fd};
+        *token = (struct token){.kind = FROM_FILE, .redirect_fd = redirect_fd};
+        return true;
     }
 
     // must be '>'
@@ -197,12 +203,14 @@ static struct token token(char **ptr) {
         (*ptr)++;
         if(**ptr == '>') {
             fprintf(stderr, "Syntax error: >>> is not a valid redirect, did you mean >>?\n");
-            exit(EXIT_FAILURE);
+            return false;
         }
-        return (struct token){.kind = TO_FILE_APPEND, .redirect_fd = redirect_fd};
+        *token = (struct token){.kind = TO_FILE_APPEND, .redirect_fd = redirect_fd};
+        return true;
     }
 
-    return (struct token){.kind = TO_FILE, .redirect_fd = redirect_fd};
+    *token = (struct token){.kind = TO_FILE, .redirect_fd = redirect_fd};
+    return true;
 }
 
 static void exit_command(char **args) {
@@ -339,7 +347,9 @@ int main(void){
                 tok = (struct token){.kind = PIPE};
             } else {
                 last_iter = false;
-                tok = token(&ptr);
+                if(!token(&ptr, &tok)) {
+                    goto next_line;
+                }
             }
 
             // if the previous token was TEXT, it needs a null terminator
@@ -353,11 +363,11 @@ int main(void){
                 if(!pending_redirect) {
                     extend_buf((void**)&arg_ptr_buf, &arg_ptr_buf_len, sizeof(char**));
                     arg_ptr_buf[arg_ptr_buf_len - 1] = tok.text;
-                    proc_argc++;                
+                    proc_argc++;
                 } else {
                     if(tok.kind != TEXT) {
                         fprintf(stderr, "Syntax error: expected text after redirect token, got %s\n", last_iter ? "end of line" : stringify_enum[tok.kind]);
-                        exit(1);
+                        goto next_line;
                     }
                     extend_buf((void**)&proc_redirect_buf, &proc_redirect_buf_len, sizeof(struct proc_redirect));
                     proc_redirect_buf[proc_redirect_buf_len - 1] = (struct proc_redirect){.file_name = tok.text, .target_fd = pending_redirect_fd, .open_flags = pending_redirect_flags};
@@ -390,7 +400,7 @@ int main(void){
                     goto next_line;
                 }
                 fprintf(stderr, "Syntax error: no name given for process, expected at least one text token\n");
-                exit(1);
+                goto next_line;
             }
 
             // fill in proc_redirect header with number of arguments and redirects
@@ -482,6 +492,7 @@ int main(void){
         }
 
         next_line:
+        assert(command != NULL);
         free(command);
         if(arg_ptr_buf) free(arg_ptr_buf);
         if(proc_redirect_buf) free(proc_redirect_buf);
