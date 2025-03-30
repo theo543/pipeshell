@@ -365,10 +365,6 @@ int main(void){
                     arg_ptr_buf[arg_ptr_buf_len - 1] = tok.text;
                     proc_argc++;
                 } else {
-                    if(tok.kind != TEXT) {
-                        fprintf(stderr, "Syntax error: expected text after redirect token, got %s\n", last_iter ? "end of line" : stringify_enum[tok.kind]);
-                        goto next_line;
-                    }
                     extend_buf((void**)&proc_redirect_buf, &proc_redirect_buf_len, sizeof(struct proc_redirect));
                     proc_redirect_buf[proc_redirect_buf_len - 1] = (struct proc_redirect){.file_name = tok.text, .target_fd = pending_redirect_fd, .open_flags = pending_redirect_flags};
                     pending_redirect_fd = 0;
@@ -379,6 +375,11 @@ int main(void){
                 // can't write null terminator now, must defer until after next token
                 pending_null = ptr;
                 continue;
+            }
+
+            if(pending_redirect) {
+                fprintf(stderr, "Syntax error: expected text after redirect token, got %s\n", last_iter ? "end of line" : stringify_enum[tok.kind]);
+                goto next_line;
             }
 
             if(tok.kind != PIPE) {
