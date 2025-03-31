@@ -482,7 +482,7 @@ int main(void){
                     perror("open");
                     exit(1);
                 }
-                if(fd != redirect->target_fd) {
+                if(fd != redirect[y].target_fd) {
                     // copy onto target fd (copy won't have CLOEXEC bit)
                     dup2_(fd, redirect[y].target_fd);
                 } else {
