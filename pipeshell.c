@@ -427,7 +427,7 @@ int main(void){
         // parsed the command, data is stored in proc_redirect buf and arg_ptr_buf, ready to spawn processes
 
         // special case: if command is 'exit' and not in a pipeline, run exit in this process
-        if(processes == 1 && (strncmp(arg_ptr_buf[0], "exit", 4) == 0)) {
+        if(processes == 1 && (strcmp(arg_ptr_buf[0], "exit") == 0)) {
             exit_command(arg_ptr_buf);
         }
 
@@ -489,7 +489,7 @@ int main(void){
                     clear_cloexec(fd);
                 }
             }
-            if(strncmp(*arg_start, "exit", 4) == 0) {
+            if(strcmp(*arg_start, "exit") == 0) {
                 exit_command(arg_start);
             }
             while(true) {
