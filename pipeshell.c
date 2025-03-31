@@ -272,35 +272,40 @@ static void extend_buf(void **buf, size_t *len, size_t size) {
 }
 
 void dup2_(int fd1, int fd2) {
-    if(dup2(fd1, fd2) < 0) {
+    while(dup2(fd1, fd2) < 0) {
+        if(errno == EINTR) continue;
         perror("dup2");
         exit(1);
     }
 }
 
 void close_(int fd) {
-    if(close(fd) != 0) {
+    while(close(fd) != 0) {
+        if(errno == EINTR) continue;
         perror("close");
         exit(1);
     }
 }
 
 void pipe_(int pipefd[2]) {
-    if(pipe(pipefd) != 0) {
+    while(pipe(pipefd) != 0) {
+        if(errno == EINTR) continue;
         perror("pipe");
         exit(1);
     }
 }
 
 void set_cloexec(int fd) {
-    if(fcntl(fd, F_SETFD, FD_CLOEXEC) != 0) {
+    while(fcntl(fd, F_SETFD, FD_CLOEXEC) != 0) {
+        if(errno == EINTR) continue;
         perror("fcntl(.., F_SETFD, F_CLOEXEC)");
         exit(1);
     }
 }
 
 void clear_cloexec(int fd) {
-    if(fcntl(fd, F_SETFD, 0) != 0) {
+    while(fcntl(fd, F_SETFD, 0) != 0) {
+        if(errno == EINTR) continue;
         perror("fcntl(.., F_SETFD, 0)");
         exit(1);
     }
@@ -313,9 +318,8 @@ int main(void){
         size_t command_buf_capacity = 0;
         errno = 0;
         if(getline(&command, &command_buf_capacity, stdin) < 0) {
-            if(errno == 0) {
-                exit(0); // EOF
-            }
+            if(errno == 0) exit(0); // EOF
+            if(errno == EINTR) continue;
             perror("getline");
             exit(EXIT_FAILURE);
         }
@@ -438,7 +442,11 @@ int main(void){
                 set_cloexec(pipe_fds[0]);
                 set_cloexec(pipe_fds[1]);
             }
-            int pid = fork();
+            int pid;
+            while(true) {
+                pid = fork();
+                if(pid >= 0 || errno != EINTR) break;
+            }
             if(pid < 0) {
                 perror("fork");
                 break;
@@ -484,9 +492,12 @@ int main(void){
             if(strncmp(*arg_start, "exit", 4) == 0) {
                 exit_command(arg_start);
             }
-            execvp(*arg_start, arg_start);
-            perror("execvp");
-            exit(1);
+            while(true) {
+                execvp(*arg_start, arg_start);
+                if(errno == EINTR) continue;
+                perror("execvp");
+                exit(1);
+            }
         }
 
         while(1) {
