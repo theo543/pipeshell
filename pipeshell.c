@@ -14,6 +14,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/wait.h>
+#include <signal.h>
 
 struct str_list {
     char *text;
@@ -311,7 +312,22 @@ void clear_cloexec(int fd) {
     }
 }
 
+struct sigaction sa_dfl;
+struct sigaction sa_handle;
+
+void ignore_next_sigint(int _sigint) {
+    (void)_sigint;
+    sigaction(SIGINT, &sa_dfl, NULL);
+}
+
 int main(void){
+    sigemptyset(&sa_dfl.sa_mask);
+    sa_dfl.sa_flags = 0;
+    sa_dfl.sa_handler = SIG_DFL;
+    sigemptyset(&sa_handle.sa_mask);
+    sa_handle.sa_flags = 0;
+    sa_handle.sa_handler = ignore_next_sigint;
+
     while(true) {
         if(isatty(STDIN_FILENO)) fprintf(stderr, "> ");
         char *command = NULL;
@@ -500,11 +516,17 @@ int main(void){
             }
         }
 
+        // ignore next SIGINT
+        // when this process group is signalled, children will automatically receive SIGINT too
+        // handler will interrupt wait with EINTR, so that the loop can end next iteration
+        // a second SIGINT is allowed to kill this process
+        sigaction(SIGINT, &sa_handle, NULL);
         while(1) {
             while(wait(NULL) > 0);
             if(errno == EINTR) continue;
             break;
         }
+        sigaction(SIGINT, &sa_dfl, NULL);
 
         next_line:
         assert(command != NULL);
