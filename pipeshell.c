@@ -272,7 +272,7 @@ static void extend_buf(void **buf, size_t *len, size_t size) {
     assert(*buf != NULL);
 }
 
-void dup2_(int fd1, int fd2) {
+static void dup2_(int fd1, int fd2) {
     while(dup2(fd1, fd2) < 0) {
         if(errno == EINTR) continue;
         perror("dup2");
@@ -280,7 +280,7 @@ void dup2_(int fd1, int fd2) {
     }
 }
 
-void close_(int fd) {
+static void close_(int fd) {
     while(close(fd) != 0) {
         if(errno == EINTR) continue;
         perror("close");
@@ -288,7 +288,7 @@ void close_(int fd) {
     }
 }
 
-void pipe_(int pipefd[2]) {
+static void pipe_(int pipefd[2]) {
     while(pipe(pipefd) != 0) {
         if(errno == EINTR) continue;
         perror("pipe");
@@ -296,7 +296,7 @@ void pipe_(int pipefd[2]) {
     }
 }
 
-void set_cloexec(int fd) {
+static void set_cloexec(int fd) {
     while(fcntl(fd, F_SETFD, FD_CLOEXEC) != 0) {
         if(errno == EINTR) continue;
         perror("fcntl(.., F_SETFD, F_CLOEXEC)");
@@ -304,7 +304,7 @@ void set_cloexec(int fd) {
     }
 }
 
-void clear_cloexec(int fd) {
+static void clear_cloexec(int fd) {
     while(fcntl(fd, F_SETFD, 0) != 0) {
         if(errno == EINTR) continue;
         perror("fcntl(.., F_SETFD, 0)");
@@ -312,10 +312,10 @@ void clear_cloexec(int fd) {
     }
 }
 
-struct sigaction sa_dfl;
-struct sigaction sa_handle;
+static struct sigaction sa_dfl;
+static struct sigaction sa_handle;
 
-void ignore_next_sigint(int _sigint) {
+static void ignore_next_sigint(int _sigint) {
     (void)_sigint;
     sigaction(SIGINT, &sa_dfl, NULL);
 }
@@ -451,6 +451,7 @@ int main(void){
         struct proc_redirect *redirect = proc_redirect_buf;
         char **arg_start = arg_ptr_buf;
 
+        pid_t last_process_pid;
         for(int x = 0;x < processes;x++) {
             int pipe_fds[2] = {0, 0};
             if(x != processes - 1) {
@@ -467,6 +468,7 @@ int main(void){
                 perror("fork");
                 break;
             } else if(pid != 0) {
+                last_process_pid = pid;
                 if(processes == 1) {
                     // no pipes
                 } else if(x == 0) {
@@ -521,12 +523,26 @@ int main(void){
         // handler will interrupt wait with EINTR, so that the loop can end next iteration
         // a second SIGINT is allowed to kill this process
         sigaction(SIGINT, &sa_handle, NULL);
+        int last_proc_code = 0;
         while(1) {
-            while(wait(NULL) > 0);
-            if(errno == EINTR) continue;
-            break;
+            int code;
+            pid_t pid = wait(&code);
+            if(pid < 0) {
+                if(errno == EINTR) continue;
+                break;
+            }
+            if(pid == last_process_pid) {
+                last_proc_code = code;
+            }
         }
         sigaction(SIGINT, &sa_dfl, NULL);
+
+        if(WIFEXITED(last_proc_code) && WEXITSTATUS(last_proc_code) != 0) {
+            fprintf(stderr, "Process returned non-zero exit code %d\n", WEXITSTATUS(last_proc_code));
+        }
+        if(WIFSIGNALED(last_proc_code)) {
+            fprintf(stderr, "\nProcess killed by signal %d\n", WTERMSIG(last_proc_code));
+        }
 
         next_line:
         assert(command != NULL);
